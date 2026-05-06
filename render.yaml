@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: gafur-abdumajidov-bot
+    runtime: node
+    buildCommand: npm install
+    startCommand: node bot.js
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: PORT
+        value: 3000
