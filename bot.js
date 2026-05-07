@@ -44,6 +44,7 @@ async function initDB() {
         description TEXT DEFAULT '',
         year TEXT DEFAULT '',
         lang VARCHAR(5) DEFAULT 'uz',
+        file_id TEXT DEFAULT '',
         added TIMESTAMP DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS photos (
@@ -71,6 +72,12 @@ async function initDB() {
       );
     `);
     console.log("✅ Neon PostgreSQL jadvallar tayyor!");
+
+    // Migration: file_id ustun qo'shish (agar yo'q bo'lsa)
+    try {
+      await client.query("ALTER TABLE legacy ADD COLUMN IF NOT EXISTS file_id TEXT DEFAULT ''");
+    } catch (e) {}
+
   } catch (err) {
     console.error("❌ DB init xatosi:", err);
   } finally {
@@ -139,10 +146,10 @@ async function getLangStats() {
 }
 
 // --- Legacy ---
-async function addLegacy(type, title, description, year, lang) {
+async function addLegacy(type, title, description, year, lang, fileId) {
   await q(
-    "INSERT INTO legacy(type,title,description,year,lang) VALUES($1,$2,$3,$4,$5)",
-    [type, title, description || "", year || "", lang || "uz"]
+    "INSERT INTO legacy(type,title,description,year,lang,file_id) VALUES($1,$2,$3,$4,$5,$6)",
+    [type, title, description || "", year || "", lang || "uz", fileId || ""]
   );
 }
 async function getLegacy(type) {
@@ -568,7 +575,7 @@ bot.onText(/\/add_article/, async (msg) => {
   adminStates[chatId] = { action: "add_legacy", type: "articles" };
   bot.sendMessage(
     chatId,
-    "Maqola ma'lumotini yuboring:\n\n`Sarlavha | Tavsif | Yil | Til(uz/ru/en)`",
+    "📝 Maqola PDF faylini yuboring.\n\nCaption ga quyidagilarni yozing:\n`Sarlavha | Tavsif | Yil | Til(uz/ru/en)`",
     { parse_mode: "Markdown" }
   );
 });
@@ -580,7 +587,7 @@ bot.onText(/\/add_book/, async (msg) => {
   adminStates[chatId] = { action: "add_legacy", type: "books" };
   bot.sendMessage(
     chatId,
-    "Asar ma'lumotini yuboring:\n\n`Nomi | Tavsif | Yil | Til(uz/ru/en)`",
+    "📕 Asar PDF faylini yuboring.\n\nCaption ga:\n`Nomi | Tavsif | Yil | Til(uz/ru/en)`",
     { parse_mode: "Markdown" }
   );
 });
@@ -592,7 +599,7 @@ bot.onText(/\/add_textbook/, async (msg) => {
   adminStates[chatId] = { action: "add_legacy", type: "textbooks" };
   bot.sendMessage(
     chatId,
-    "Darslik ma'lumotini yuboring:\n\n`Nomi | Tavsif | Yil | Til(uz/ru/en)`",
+    "📘 Darslik PDF faylini yuboring.\n\nCaption ga:\n`Nomi | Tavsif | Yil | Til(uz/ru/en)`",
     { parse_mode: "Markdown" }
   );
 });
@@ -788,15 +795,25 @@ bot.on("callback_query", async (cb) => {
     if (items.length === 0)
       return bot.sendMessage(chatId, await T(chatId, "no_data"), await backBtnKB(chatId, "legacy"));
 
-    let text = "";
-    items.forEach((item, i) => {
-      text += `${i + 1}. *${item.title}*\n`;
-      if (item.year) text += `   📅 ${item.year}\n`;
-      if (item.description) text += `   ${item.description}\n`;
-      text += "\n";
-    });
+    for (const item of items) {
+      if (item.file_id) {
+        let caption = `📄 *${item.title}*`;
+        if (item.year) caption += `\n📅 ${item.year}`;
+        if (item.description) caption += `\n${item.description}`;
+        try {
+          await bot.sendDocument(chatId, item.file_id, { caption, parse_mode: "Markdown" });
+        } catch (e) {
+          console.error("Legacy PDF send err:", e.message);
+        }
+      } else {
+        let text = `📄 *${item.title}*`;
+        if (item.year) text += `\n📅 ${item.year}`;
+        if (item.description) text += `\n${item.description}`;
+        await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+      }
+    }
 
-    return bot.sendMessage(chatId, text, {
+    return bot.sendMessage(chatId, `📚 ${items.length} ta`, {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [
@@ -902,12 +919,14 @@ bot.on("message", async (msg) => {
       return bot.sendMessage(chatId, `✅ Biografiya (${state.lang.toUpperCase()}) saqlandi.`);
     }
 
-    if (state.action === "add_legacy" && msg.text) {
-      const parts = msg.text.split("|").map((s) => s.trim());
-      if (parts.length < 2) {
-        return bot.sendMessage(chatId, "❌ Noto'g'ri format.\n`Sarlavha | Tavsif | Yil | Til`", { parse_mode: "Markdown" });
+    if (state.action === "add_legacy" && msg.document) {
+      const fileId = msg.document.file_id;
+      const caption = msg.caption || "";
+      const parts = caption.split("|").map((s) => s.trim());
+      if (parts.length < 1 || !parts[0]) {
+        return bot.sendMessage(chatId, "❌ PDF caption ga yozing:\n`Sarlavha | Tavsif | Yil | Til`", { parse_mode: "Markdown" });
       }
-      await addLegacy(state.type, parts[0], parts[1] || "", parts[2] || "", parts[3] || "uz");
+      await addLegacy(state.type, parts[0], parts[1] || "", parts[2] || "", parts[3] || "uz", fileId);
       adminStates[chatId] = null;
       return bot.sendMessage(chatId, `✅ ${state.type} ga qo'shildi: ${parts[0]}`);
     }
