@@ -231,7 +231,16 @@ bot.on("message",async(msg)=>{
 
 // START
 async function start(){
-  await initDB();
-  app.listen(PORT,()=>{console.log(`🤖 G'afur Bot: ${PORT}`);});
-  try{await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);console.log("✅ Webhook o'rnatildi");}catch(e){console.error("⚠️ Webhook xato, qo'lda o'rnating:",e.message);}
+  try{
+    await initDB();
+  }catch(e){
+    console.error("DB ERROR:",e.message);
+  }
+  app.listen(PORT,()=>{console.log(`🤖 Bot: ${PORT}`);});
+  try{
+    await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);
+    console.log("✅ Webhook ok");
+  }catch(e){
+    console.error("Webhook err:",e.message);
+  }
 }
