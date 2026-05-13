@@ -1,10 +1,10 @@
 console.log("BOT STARTING...");
 require("dotenv").config();
-console.log("ENV loaded, DB URL exists:", !!process.env.DATABASE_URL);
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const { Pool } = require("pg");
 console.log("Modules loaded");
+
 const TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
@@ -15,6 +15,7 @@ const ADMIN_IDS = [7153696822, 8013328081];
 const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 async function initDB() {
+  console.log("initDB...");
   const client = await pool.connect();
   try {
     await client.query(`
@@ -28,7 +29,7 @@ async function initDB() {
     `);
     try { await client.query("ALTER TABLE legacy ADD COLUMN IF NOT EXISTS file_id TEXT DEFAULT ''"); } catch(e){}
     console.log("✅ PostgreSQL tayyor!");
-  } catch(err) { console.error("❌ DB err:", err); } finally { client.release(); }
+  } catch(err) { console.error("❌ DB err:", err.message); } finally { client.release(); }
 }
 
 // DB HELPERS
@@ -61,13 +62,18 @@ async function addContact(t,v) { await q("INSERT INTO contacts(type,value) VALUE
 async function getContacts() { return (await q("SELECT type,value FROM contacts ORDER BY id")).rows; }
 async function deleteContact(type) { await q("DELETE FROM contacts WHERE type=$1",[type]); }
 
-// EXPRESS + BOT
+// EXPRESS
 const app = express();
 app.use(express.json());
 app.get("/",(req,res)=>res.send("G'afur Abdumajidov Bot 🎓"));
 app.get("/health",async(req,res)=>{try{res.json({status:"ok",users:await countUsers()});}catch(e){res.status(500).json({error:e.message});}});
-const bot = new TelegramBot(TOKEN);
+
+// BOT — polling o'chirilgan
+const bot = new TelegramBot(TOKEN, { polling: false });
+console.log("Bot created, polling disabled");
+
 app.post(`/bot${TOKEN}`,(req,res)=>{bot.processUpdate(req.body);res.sendStatus(200);});
+console.log("Routes set");
 
 // TRANSLATIONS
 const tr = {
@@ -142,7 +148,7 @@ Foydalanuvchi ${langN[lang]} tilida. Shu tilda javob ber. Muloyim, donishmand, i
     chatStates[c].history.push({role:"user",text:userMsg},{role:"model",text:reply});
     if(chatStates[c].history.length>20) chatStates[c].history=chatStates[c].history.slice(-20);
     return reply;
-  } catch(e){console.error("Gemini:",e);return await T(c,"chat_error");}
+  } catch(e){console.error("Gemini:",e.message);return await T(c,"chat_error");}
 }
 
 // COMMANDS
@@ -151,29 +157,29 @@ bot.onText(/\/menu/,async(msg)=>{chatStates[msg.chat.id]=null;bot.sendMessage(ms
 
 // ADMIN
 bot.onText(/\/admin/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return bot.sendMessage(c,await T(c,"admin_only"));
-  bot.sendMessage(c,`🔧 *Admin Panel*\n\n/add\\_bio — Biografiya\n/add\\_article — Maqola\n/add\\_book — Asar\n/add\\_textbook — Darslik\n/add\\_photo — Surat\n/add\\_memory — Xotira\n/add\\_contact — Bog'lanish\n/add\\_scholarship — Stipendiya\n/add\\_channel @kanal\n/remove\\_channel @kanal\n/broadcast — Ommaviy\n/stats\n\n*O'chirish:*\n/del\\_article — Maqola o'chirish\n/del\\_book — Asar o'chirish\n/del\\_textbook — Darslik o'chirish\n/del\\_photo — Surat o'chirish\n/del\\_memory — Xotira o'chirish\n/del\\_contact — Kontakt o'chirish`,{parse_mode:"Markdown"});});
+  bot.sendMessage(c,`🔧 *Admin Panel*\n\n/add\\_bio — Biografiya\n/add\\_article — Maqola\n/add\\_book — Asar\n/add\\_textbook — Darslik\n/add\\_photo — Surat\n/add\\_memory — Xotira\n/add\\_contact — Bog'lanish\n/add\\_scholarship — Stipendiya\n/add\\_channel @kanal\n/remove\\_channel @kanal\n/broadcast — Ommaviy\n/stats\n\n*O'chirish:*\n/del\\_article /del\\_book /del\\_textbook\n/del\\_photo /del\\_memory /del\\_contact`,{parse_mode:"Markdown"});});
 
 bot.onText(/\/add_bio/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"bio_lang"};bot.sendMessage(c,"Til?",{reply_markup:{inline_keyboard:[[{text:"🇺🇿",callback_data:"adm_bio_uz"},{text:"🇷🇺",callback_data:"adm_bio_ru"},{text:"🇬🇧",callback_data:"adm_bio_en"}]]}});});
-bot.onText(/\/add_article/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"legacy_step1",type:"articles"};bot.sendMessage(c,"📝 PDF yuboring yoki /skip bosib o'tkazib yuboring:");});
-bot.onText(/\/add_book/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"legacy_step1",type:"books"};bot.sendMessage(c,"📕 PDF yuboring yoki /skip bosib o'tkazib yuboring:");});
-bot.onText(/\/add_textbook/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"legacy_step1",type:"textbooks"};bot.sendMessage(c,"📘 PDF yuboring yoki /skip bosib o'tkazib yuboring:");});
-bot.onText(/\/skip/,async(m)=>{const c=m.chat.id;if(!adminStates[c])return;if(adminStates[c].action==="legacy_step1"){adminStates[c].action="legacy_step2";adminStates[c].fileId="";bot.sendMessage(c,"Tavsif yuboring:\n`Sarlavha | Tavsif | Yil | Til(uz/ru/en)`",{parse_mode:"Markdown"});}else if(adminStates[c].action==="sch_step1"){adminStates[c]={action:"sch_step1_lang",fileId:""};bot.sendMessage(c,"Til tanlang:",{reply_markup:{inline_keyboard:[[{text:"🇺🇿",callback_data:"adm_sch_uz"},{text:"🇷🇺",callback_data:"adm_sch_ru"},{text:"🇬🇧",callback_data:"adm_sch_en"}]]}});}});
+bot.onText(/\/add_article/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"legacy_step1",type:"articles"};bot.sendMessage(c,"📝 PDF yuboring yoki /skip:");});
+bot.onText(/\/add_book/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"legacy_step1",type:"books"};bot.sendMessage(c,"📕 PDF yuboring yoki /skip:");});
+bot.onText(/\/add_textbook/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"legacy_step1",type:"textbooks"};bot.sendMessage(c,"📘 PDF yuboring yoki /skip:");});
+bot.onText(/\/skip/,async(m)=>{const c=m.chat.id;if(!adminStates[c])return;if(adminStates[c].action==="legacy_step1"){adminStates[c].action="legacy_step2";adminStates[c].fileId="";bot.sendMessage(c,"`Sarlavha | Tavsif | Yil | Til`",{parse_mode:"Markdown"});}else if(adminStates[c].action==="sch_step1"){adminStates[c]={action:"sch_step1_lang",fileId:""};bot.sendMessage(c,"Til tanlang:",{reply_markup:{inline_keyboard:[[{text:"🇺🇿",callback_data:"adm_sch_uz"},{text:"🇷🇺",callback_data:"adm_sch_ru"},{text:"🇬🇧",callback_data:"adm_sch_en"}]]}});}});
 bot.onText(/\/add_photo/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"add_photo"};bot.sendMessage(c,"📷 Surat yuboring:");});
 bot.onText(/\/add_memory/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"add_memory"};bot.sendMessage(c,"🕯 Surat yoki havola:");});
 bot.onText(/\/add_contact/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"add_contact"};bot.sendMessage(c,"`turi | havola`",{parse_mode:"Markdown"});});
-bot.onText(/\/add_scholarship/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"sch_step1"};bot.sendMessage(c,"🎓 Stipendiya nizomi PDF yuboring yoki /skip:");});
+bot.onText(/\/add_scholarship/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"sch_step1"};bot.sendMessage(c,"🎓 PDF yuboring yoki /skip:");});
 bot.onText(/\/add_channel (.+)/,async(m,match)=>{if(!isAdmin(m.from.id))return;await addForcedChannel(match[1].trim());bot.sendMessage(m.chat.id,`✅ ${match[1].trim()}`);});
 bot.onText(/\/remove_channel (.+)/,async(m,match)=>{if(!isAdmin(m.from.id))return;await removeForcedChannel(match[1].trim());bot.sendMessage(m.chat.id,"✅ O'chirildi");});
 bot.onText(/\/broadcast/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;adminStates[c]={action:"broadcast"};bot.sendMessage(c,"📢 Xabar yuboring:");});
 bot.onText(/\/stats/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const t=await countUsers(),td=await countTodayUsers(),ls=await getLangStats(),a=await countLegacy("articles"),b=await countLegacy("books"),tb=await countLegacy("textbooks"),p=await countPhotos(),mm=await countMemories();bot.sendMessage(c,`📊 *Statistika*\n👥 ${t} | 📅 ${td}\n🇺🇿 ${ls.uz||0} 🇷🇺 ${ls.ru||0} 🇬🇧 ${ls.en||0}\n📝 ${a} 📕 ${b} 📘 ${tb} 🖼 ${p} 🕯 ${mm}`,{parse_mode:"Markdown"});});
 
 // DELETE COMMANDS
-bot.onText(/\/del_article/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getLegacy("articles");if(!items.length)return bot.sendMessage(c,"📭 Maqolalar yo'q");const kb=items.map(i=>[{text:`❌ ${i.title} (${i.year||"?"})`,callback_data:`del_leg_${i.id}`}]);kb.push([{text:"⬅️",callback_data:"main_menu"}]);bot.sendMessage(c,"O'chirish uchun tanlang:",{reply_markup:{inline_keyboard:kb}});});
-bot.onText(/\/del_book/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getLegacy("books");if(!items.length)return bot.sendMessage(c,"📭 Asarlar yo'q");const kb=items.map(i=>[{text:`❌ ${i.title}`,callback_data:`del_leg_${i.id}`}]);bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:kb}});});
-bot.onText(/\/del_textbook/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getLegacy("textbooks");if(!items.length)return bot.sendMessage(c,"📭 Darsliklar yo'q");const kb=items.map(i=>[{text:`❌ ${i.title}`,callback_data:`del_leg_${i.id}`}]);bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:kb}});});
-bot.onText(/\/del_photo/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getPhotos();if(!items.length)return bot.sendMessage(c,"📭 Suratlar yo'q");const kb=items.map((p,i)=>[{text:`❌ Surat #${i+1} ${p.caption||""}`.substring(0,40),callback_data:`del_pho_${p.id}`}]);bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:kb}});});
-bot.onText(/\/del_memory/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getMemories();if(!items.length)return bot.sendMessage(c,"📭 Xotiralar yo'q");const kb=items.map((p,i)=>[{text:`❌ #${i+1} ${(p.caption||p.url||"").substring(0,30)}`,callback_data:`del_mem_${p.id}`}]);bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:kb}});});
-bot.onText(/\/del_contact/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getContacts();if(!items.length)return bot.sendMessage(c,"📭 Kontaktlar yo'q");const kb=items.map(r=>[{text:`❌ ${r.type}: ${r.value}`,callback_data:`del_con_${r.type}`}]);bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:kb}});});
+bot.onText(/\/del_article/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getLegacy("articles");if(!items.length)return bot.sendMessage(c,"📭 Yo'q");const kb=items.map(i=>[{text:`❌ ${i.title}`,callback_data:`del_leg_${i.id}`}]);kb.push([{text:"⬅️",callback_data:"main_menu"}]);bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:kb}});});
+bot.onText(/\/del_book/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getLegacy("books");if(!items.length)return bot.sendMessage(c,"📭 Yo'q");bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:items.map(i=>[{text:`❌ ${i.title}`,callback_data:`del_leg_${i.id}`}])}});});
+bot.onText(/\/del_textbook/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getLegacy("textbooks");if(!items.length)return bot.sendMessage(c,"📭 Yo'q");bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:items.map(i=>[{text:`❌ ${i.title}`,callback_data:`del_leg_${i.id}`}])}});});
+bot.onText(/\/del_photo/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getPhotos();if(!items.length)return bot.sendMessage(c,"📭 Yo'q");bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:items.map((p,i)=>[{text:`❌ #${i+1} ${(p.caption||"").substring(0,30)}`,callback_data:`del_pho_${p.id}`}])}});});
+bot.onText(/\/del_memory/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getMemories();if(!items.length)return bot.sendMessage(c,"📭 Yo'q");bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:items.map((p,i)=>[{text:`❌ #${i+1} ${(p.caption||p.url||"").substring(0,30)}`,callback_data:`del_mem_${p.id}`}])}});});
+bot.onText(/\/del_contact/,async(m)=>{const c=m.chat.id;if(!isAdmin(m.from.id))return;const items=await getContacts();if(!items.length)return bot.sendMessage(c,"📭 Yo'q");bot.sendMessage(c,"O'chirish:",{reply_markup:{inline_keyboard:items.map(r=>[{text:`❌ ${r.type}: ${r.value}`,callback_data:`del_con_${r.type}`}])}});});
 
 // CALLBACK QUERIES
 bot.on("callback_query",async(cb)=>{
@@ -192,11 +198,11 @@ bot.on("callback_query",async(cb)=>{
   if(d==="contacts"){const rows=await getContacts();if(!rows.length)return bot.sendMessage(c,await T(c,"no_data"),await backBtnKB(c));const icons={instagram:"📷",telegram:"✈️",facebook:"📘",youtube:"🎬",website:"🌐",phone:"📱",email:"📧"};let t="📞 *Bog'lanish:*\n\n";for(const r of rows)t+=`${icons[r.type]||"▪️"} ${r.type}: ${r.value}\n`;return bot.sendMessage(c,t,await backBtnKB(c));}
   if(d==="scholarship"){const l=await getUserLang(c);let s=await getSetting(`scholarship_${l}`);if(!s)s=await getSetting("scholarship_uz");const fid=await getSetting(`scholarship_file_${l}`)||await getSetting("scholarship_file_uz");if(!s&&!fid)return bot.sendMessage(c,await T(c,"no_data"),await backBtnKB(c));if(fid){try{await bot.sendDocument(c,fid,{caption:`🎓 *Stipendiya nizomi*\n\n${s||""}`,parse_mode:"Markdown"});}catch(e){if(s)await bot.sendMessage(c,`🎓 *Stipendiya*\n\n${s}`,{parse_mode:"Markdown"});}}else if(s){await bot.sendMessage(c,`🎓 *Stipendiya*\n\n${s}`,{parse_mode:"Markdown"});}return bot.sendMessage(c,"🎓",await backBtnKB(c));}
 
-  // Admin bio/sch lang
+  // Admin
   if(d.startsWith("adm_bio_")){adminStates[c]={action:"bio_text",lang:d.replace("adm_bio_","")};return bot.sendMessage(c,"Biografiya matnini yuboring:");}
   if(d.startsWith("adm_sch_")){const lang=d.replace("adm_sch_","");adminStates[c]={action:"sch_text",lang,fileId:adminStates[c]?.fileId||""};return bot.sendMessage(c,`Stipendiya matnini (${lang.toUpperCase()}) yuboring:`);}
 
-  // Delete callbacks
+  // Deletes
   if(d.startsWith("del_leg_")){await deleteLegacy(parseInt(d.replace("del_leg_","")));return bot.sendMessage(c,"✅ O'chirildi");}
   if(d.startsWith("del_pho_")){await deletePhoto(parseInt(d.replace("del_pho_","")));return bot.sendMessage(c,"✅ O'chirildi");}
   if(d.startsWith("del_mem_")){await deleteMemory(parseInt(d.replace("del_mem_","")));return bot.sendMessage(c,"✅ O'chirildi");}
@@ -212,13 +218,13 @@ bot.on("message",async(msg)=>{
   if(isAdmin(msg.from.id)&&adminStates[c]){
     const st=adminStates[c];
     if(st.action==="bio_text"&&msg.text){await setSetting(`biography_${st.lang}`,msg.text);adminStates[c]=null;return bot.sendMessage(c,"✅ Biografiya saqlandi.");}
-    if(st.action==="legacy_step1"&&msg.document){adminStates[c].fileId=msg.document.file_id;adminStates[c].action="legacy_step2";return bot.sendMessage(c,"✅ PDF qabul qilindi.\nEndi tavsif yuboring:\n`Sarlavha | Tavsif | Yil | Til(uz/ru/en)`",{parse_mode:"Markdown"});}
-    if(st.action==="legacy_step2"&&msg.text){const p=msg.text.split("|").map(s=>s.trim());if(!p[0])return bot.sendMessage(c,"❌ Kamida sarlavha kerak");await addLegacy(st.type,p[0],p[1]||"",p[2]||"",p[3]||"uz",st.fileId||"");adminStates[c]=null;return bot.sendMessage(c,`✅ Qo'shildi: ${p[0]}`);}
+    if(st.action==="legacy_step1"&&msg.document){adminStates[c].fileId=msg.document.file_id;adminStates[c].action="legacy_step2";return bot.sendMessage(c,"✅ PDF qabul qilindi.\n`Sarlavha | Tavsif | Yil | Til`",{parse_mode:"Markdown"});}
+    if(st.action==="legacy_step2"&&msg.text){const p=msg.text.split("|").map(s=>s.trim());if(!p[0])return bot.sendMessage(c,"❌ Sarlavha kerak");await addLegacy(st.type,p[0],p[1]||"",p[2]||"",p[3]||"uz",st.fileId||"");adminStates[c]=null;return bot.sendMessage(c,`✅ Qo'shildi: ${p[0]}`);}
+    if(st.action==="sch_step1"&&msg.document){adminStates[c]={action:"sch_step1_lang",fileId:msg.document.file_id};return bot.sendMessage(c,"✅ PDF qabul qilindi.\nTil tanlang:",{reply_markup:{inline_keyboard:[[{text:"🇺🇿",callback_data:"adm_sch_uz"},{text:"🇷🇺",callback_data:"adm_sch_ru"},{text:"🇬🇧",callback_data:"adm_sch_en"}]]}});}
+    if(st.action==="sch_text"&&msg.text){await setSetting(`scholarship_${st.lang}`,msg.text);if(st.fileId)await setSetting(`scholarship_file_${st.lang}`,st.fileId);adminStates[c]=null;return bot.sendMessage(c,"✅ Stipendiya saqlandi.");}
     if(st.action==="add_photo"&&msg.photo){await addPhoto(msg.photo[msg.photo.length-1].file_id,msg.caption||"");adminStates[c]=null;return bot.sendMessage(c,"✅ Surat saqlandi.");}
     if(st.action==="add_memory"){if(msg.photo){await addMemory("photo",msg.photo[msg.photo.length-1].file_id,null,msg.caption||"");adminStates[c]=null;return bot.sendMessage(c,"✅ Saqlandi.");}else if(msg.text){await addMemory("link",null,msg.text,"");adminStates[c]=null;return bot.sendMessage(c,"✅ Saqlandi.");}}
     if(st.action==="add_contact"&&msg.text){const p=msg.text.split("|").map(s=>s.trim());if(p.length<2)return bot.sendMessage(c,"❌ turi | havola");await addContact(p[0].toLowerCase(),p[1]);adminStates[c]=null;return bot.sendMessage(c,`✅ ${p[0]}=${p[1]}`);}
-    if(st.action==="sch_step1"&&msg.document){adminStates[c]={action:"sch_step1_lang",fileId:msg.document.file_id};return bot.sendMessage(c,"✅ PDF qabul qilindi.\nTil tanlang:",{reply_markup:{inline_keyboard:[[{text:"🇺🇿",callback_data:"adm_sch_uz"},{text:"🇷🇺",callback_data:"adm_sch_ru"},{text:"🇬🇧",callback_data:"adm_sch_en"}]]}});}
-    if(st.action==="sch_text"&&msg.text){await setSetting(`scholarship_${st.lang}`,msg.text);if(st.fileId)await setSetting(`scholarship_file_${st.lang}`,st.fileId);adminStates[c]=null;return bot.sendMessage(c,"✅ Stipendiya saqlandi.");}
     if(st.action==="broadcast"){adminStates[c]=null;const uids=await getAllUserIds();let s=0,f=0;await bot.sendMessage(c,`📤 ${uids.length}...`);for(const uid of uids){try{if(msg.text)await bot.sendMessage(uid,msg.text,{parse_mode:"Markdown"});else if(msg.photo)await bot.sendPhoto(uid,msg.photo[msg.photo.length-1].file_id,{caption:msg.caption||""});else if(msg.video)await bot.sendVideo(uid,msg.video.file_id,{caption:msg.caption||""});else if(msg.document)await bot.sendDocument(uid,msg.document.file_id,{caption:msg.caption||""});s++;}catch(e){f++;}if(s%25===0)await new Promise(r=>setTimeout(r,1000));}return bot.sendMessage(c,`✅ ${s} | ❌ ${f}`);}
   }
 
@@ -234,18 +240,8 @@ bot.on("message",async(msg)=>{
 // START
 async function start(){
   console.log("start() called");
-  try{
-    console.log("Connecting to DB...");
-    await initDB();
-    console.log("DB done");
-  }catch(e){
-    console.error("DB ERROR:", e.message);
-  }
-  app.listen(PORT,()=>{console.log(`🤖 Bot: ${PORT}`);});
-  try{
-    await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);
-    console.log("✅ Webhook ok");
-  }catch(e){
-    console.error("Webhook err:", e.message);
-  }
+  try { await initDB(); } catch(e) { console.error("DB ERROR:", e.message); }
+  app.listen(PORT, () => { console.log(`🤖 G'afur Bot: ${PORT}`); });
+  try { await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`); console.log("✅ Webhook ok"); } catch(e) { console.error("Webhook err:", e.message); }
 }
+start().catch(e => console.error("FATAL:", e.message));
