@@ -1,9 +1,10 @@
 console.log("BOT STARTING...");
 require("dotenv").config();
+console.log("ENV loaded, DB URL exists:", !!process.env.DATABASE_URL);
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const { Pool } = require("pg");
-
+console.log("Modules loaded");
 const TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
@@ -232,16 +233,19 @@ bot.on("message",async(msg)=>{
 
 // START
 async function start(){
+  console.log("start() called");
   try{
+    console.log("Connecting to DB...");
     await initDB();
+    console.log("DB done");
   }catch(e){
-    console.error("DB ERROR:",e.message);
+    console.error("DB ERROR:", e.message);
   }
   app.listen(PORT,()=>{console.log(`🤖 Bot: ${PORT}`);});
   try{
     await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);
     console.log("✅ Webhook ok");
   }catch(e){
-    console.error("Webhook err:",e.message);
+    console.error("Webhook err:", e.message);
   }
 }
