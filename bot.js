@@ -72,9 +72,11 @@ app.get("/health",async(req,res)=>{try{res.json({status:"ok",users:await countUs
 const bot = new TelegramBot(TOKEN, { polling: false });
 console.log("Bot created, polling disabled");
 
-app.post(`/bot${TOKEN}`,(req,res)=>{bot.processUpdate(req.body);res.sendStatus(200);});
-console.log("Routes set");
-
+app.post(`/bot${TOKEN}`,(req,res)=>{
+  console.log("WEBHOOK HIT:", JSON.stringify(req.body).substring(0,100));
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
 // TRANSLATIONS
 const tr = {
   uz: {
