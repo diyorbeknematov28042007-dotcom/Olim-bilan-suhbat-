@@ -38,13 +38,13 @@ async function initDB() {
 // SAFE SEND — Markdown xato bersa oddiy matn sifatida yuboradi
 async function safeSend(chatId, text, opts = {}) {
   try {
-    return await bot.sendMessage(chatId, text, { parse_mode: "Markdown", ...opts });
+    return await bot.sendMessage(chatId, text, opts);
   } catch (e) {
-    console.error("Markdown err, retry plain:", e.message);
+    console.error("Send err:", e.message);
     try {
-      const plainOpts = { ...opts };
-      delete plainOpts.parse_mode;
-      return await bot.sendMessage(chatId, text.replace(/[*_`\[]/g, ""), plainOpts);
+      const cleanOpts = { ...opts };
+      delete cleanOpts.parse_mode;
+      return await bot.sendMessage(chatId, text.replace(/[*_`\[\]]/g, ""), cleanOpts);
     } catch (e2) {
       console.error("Send failed:", e2.message);
     }
